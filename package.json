@@ -10,6 +10,7 @@
   "license": "MIT",
   "dependencies": {
     "@tensorflow/tfjs": "^2.3.0",
-    "@tensorflow/tfjs-vis": "^1.4.3"
+    "@tensorflow/tfjs-vis": "^1.4.3",
+    "typescript": "^3.9.7"
   }
 }

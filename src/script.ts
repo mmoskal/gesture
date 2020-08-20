@@ -1,6 +1,15 @@
-import gestures from "./data.js"
+import * as tf from '@tensorflow/tfjs'
+import * as tfvis from '@tensorflow/tfjs-vis'
 
-function drawGesture(gesture, name) {
+
+interface Gesture {
+    label: string;
+    samples: number[][];
+}
+
+let gestures: Gesture[]
+
+function drawGesture(gesture: Gesture, name: string) {
     const series = ['X', 'Y', 'Z'];
     const xdata = {
         values: [0, 1, 2].map(n =>
@@ -17,6 +26,8 @@ async function showExamples() {
 }
 
 async function run() {
+    const resp = await fetch(new Request("data.json"))
+    gestures = await resp.json()
     // await showExamples();
 
     const model = getModel();
@@ -33,37 +44,39 @@ const IMAGE_CHANNELS = 1;
 
 const classNames = ['noise', 'punch', 'left', 'right'];
 
+/*
 function doPrediction(model, data, testDataSize = 500) {
-  const IMAGE_WIDTH = 28;
-  const IMAGE_HEIGHT = 28;
-  const testData = data.nextTestBatch(testDataSize);
-  const testxs = testData.xs.reshape([testDataSize, IMAGE_WIDTH, IMAGE_HEIGHT, 1]);
-  const labels = testData.labels.argMax(-1);
-  const preds = model.predict(testxs).argMax(-1);
+    const IMAGE_WIDTH = 28;
+    const IMAGE_HEIGHT = 28;
+    const testData = data.nextTestBatch(testDataSize);
+    const testxs = testData.xs.reshape([testDataSize, IMAGE_WIDTH, IMAGE_HEIGHT, 1]);
+    const labels = testData.labels.argMax(-1);
+    const preds = model.predict(testxs).argMax(-1);
 
-  testxs.dispose();
-  return [preds, labels];
+    testxs.dispose();
+    return [preds, labels];
 }
 
 
 async function showAccuracy(model, data) {
-  const [preds, labels] = doPrediction(model, data);
-  const classAccuracy = await tfvis.metrics.perClassAccuracy(labels, preds);
-  const container = {name: 'Accuracy', tab: 'Evaluation'};
-  tfvis.show.perClassAccuracy(container, classAccuracy, classNames);
+    const [preds, labels] = doPrediction(model, data);
+    const classAccuracy = await tfvis.metrics.perClassAccuracy(labels, preds);
+    const container = { name: 'Accuracy', tab: 'Evaluation' };
+    tfvis.show.perClassAccuracy(container, classAccuracy, classNames);
 
-  labels.dispose();
+    labels.dispose();
 }
 
 async function showConfusion(model, data) {
-  const [preds, labels] = doPrediction(model, data);
-  const confusionMatrix = await tfvis.metrics.confusionMatrix(labels, preds);
-  const container = {name: 'Confusion Matrix', tab: 'Evaluation'};
-  tfvis.render.confusionMatrix(
-      container, {values: confusionMatrix}, classNames);
+    const [preds, labels] = doPrediction(model, data);
+    const confusionMatrix = await tfvis.metrics.confusionMatrix(labels, preds);
+    const container = { name: 'Confusion Matrix', tab: 'Evaluation' };
+    tfvis.render.confusionMatrix(
+        container, { values: confusionMatrix }, classNames);
 
-  labels.dispose();
+    labels.dispose();
 }
+*/
 
 function getModel() {
     const model = tf.sequential();
@@ -109,7 +122,7 @@ function getModel() {
     return model;
 }
 
-function permute(arr) {
+function permute<T>(arr: T[]) {
     for (let i = 0; i < arr.length; ++i) {
         const a = (Math.random() * arr.length) | 0
         const b = (Math.random() * arr.length) | 0
@@ -119,7 +132,7 @@ function permute(arr) {
     }
 }
 
-async function train(model) {
+async function train(model: tf.LayersModel) {
     const metrics = ['loss', 'val_loss', 'acc', 'val_acc'];
     const container = {
         name: 'Model Training', styles: { height: '1000px' }
@@ -128,8 +141,8 @@ async function train(model) {
 
     const BATCH_SIZE = 8;
 
-    const trainData = []
-    const testData = []
+    const trainData: Gesture[] = []
+    const testData: Gesture[] = []
     for (const lbl of classNames) {
         const gg = gestures.filter(g => g.label == lbl)
         permute(gg)
@@ -148,7 +161,7 @@ async function train(model) {
     permute(trainData)
     permute(testData)
 
-    function toTensors(gg) {
+    function toTensors(gg: Gesture[]) {
         return [
             tf.tensor(gg.map(g => g.samples)).reshape([gg.length, NUM_SAMPLES, NUM_DIM, IMAGE_CHANNELS]),
             tf.tensor(gg.map(g => {
