@@ -1,7 +1,6 @@
 import * as tf from '@tensorflow/tfjs'
 import * as tfvis from '@tensorflow/tfjs-vis'
 
-
 interface Gesture {
     label: string;
     samples: number[][];

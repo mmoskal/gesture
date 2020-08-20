@@ -12,11 +12,10 @@
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
     "preserveConstEnums": true,
-    "declarationDir": "dist/types",
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "noImplicitAny": true,
-    "outDir": "dist/lib",
+    "outDir": "built",
     "newLine": "LF",
     "typeRoots": [
       "node_modules/@types"
