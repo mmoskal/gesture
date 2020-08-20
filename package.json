@@ -1,0 +1,15 @@
+{
+  "name": "tfjs-gesture",
+  "version": "1.0.0",
+  "description": "",
+  "main": "collect.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@tensorflow/tfjs": "^2.3.0",
+    "@tensorflow/tfjs-vis": "^1.4.3"
+  }
+}
