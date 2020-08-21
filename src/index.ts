@@ -24,7 +24,96 @@ async function showExamples() {
     }
 }
 
+type SMap<T> = {
+    [x: string]: T;
+}
+function median(arr: number[]) {
+    arr.sort((a, b) => a - b)
+    return arr[arr.length >> 1]
+}
+function dist(a: number[], b: number[]) {
+    let sum = 0
+    if (a.length != b.length)
+        throw new Error("wrong size")
+    for (let i = 0; i < a.length; i++)
+        sum += Math.abs(a[i] - b[i])
+    return sum
+}
 async function run() {
+    const csv = tf.data.csv("right2.csv")
+    const buckets: SMap<number[][]> = {}
+    const allsamples: number[][] = []
+    for (const obj of await csv.toArray()) {
+        const vals = Object.values(obj as any).slice(1) as number[]
+        const bucketId = vals.map(v => Math.round(v * 5)).join(",")
+        if (!buckets[bucketId])
+            buckets[bucketId] = []
+        buckets[bucketId].push(vals)
+        allsamples.push(vals)
+    }
+    const bids = Object.keys(buckets)
+    bids.sort((a, b) => buckets[b].length - buckets[a].length)
+    const topnum = buckets[bids[0]].length
+    const avgbuckets = bids.slice(0, 6).map(bid => buckets[bid]).filter(x => x.length > (topnum / 10))
+    const avgsamples: number[][] = []
+    avgbuckets.forEach(a => a.forEach(b => avgsamples.push(b)))
+    const med = [0, 1, 2].map(idx => median(avgsamples.map(a => a[idx])))
+    console.log("steady:", med)
+    const distances = allsamples.map(s => dist(med, s))
+    const meddist = median(distances)
+    const cutoff = meddist * 2
+    console.log("cutoff:", cutoff, "in cutoff %:", distances.filter(d => d < cutoff).length * 100 / distances.length)
+
+    const minlen = 25
+    const maxacc = 5
+    let acc = 0
+    let lastbeg = -1
+    let idx = 0
+    for (const sample of allsamples) {
+        const d = dist(med, sample)
+        sample.push(d > cutoff ? -1 : -2)
+        if (d > cutoff) {
+            acc++
+            if (lastbeg == -1)
+                lastbeg = idx
+        } else {
+            if (acc) {
+                acc--
+                if (!acc && lastbeg != -1) {
+                    const len = idx - lastbeg
+                    if (len > minlen) {
+                        for (let i = lastbeg - 3; i <= idx; ++i)
+                            allsamples[i][3] += 3
+                    }
+                    lastbeg = -1
+                }
+            }
+        }
+        acc = Math.min(maxacc, acc)
+        idx++
+    }
+
+    for (let i = 0; i < allsamples.length; i += 400) {
+        showDet(allsamples.slice(i, i + 400), "From " + i)
+    }
+
+    function showDet(allsamples: number[][], name: string) {
+        const series = ['X', 'Y', 'Z', 'G'];
+        const xdata = {
+            values: [0, 1, 2, 3].map(n =>
+                allsamples.map((s, i) => ({ x: i, y: s[n] }))), series
+        }
+        const surface = { name, tab: 'Charts' };
+        tfvis.render.linechart(surface, xdata);
+    }
+
+    /*
+    for (const bid of bids.slice(0, 10)) {
+        console.log(bid, buckets[bid])
+    }
+    */
+
+    /*
     const resp = await fetch(new Request("data.json"))
     gestures = await resp.json()
     // await showExamples();
@@ -33,6 +122,7 @@ async function run() {
     tfvis.show.modelSummary({ name: 'Model Architecture' }, model);
 
     await train(model);
+    */
 }
 
 document.addEventListener('DOMContentLoaded', run);
