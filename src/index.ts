@@ -1,28 +1,31 @@
 import * as tf from '@tensorflow/tfjs'
 import * as tfvis from '@tensorflow/tfjs-vis'
 
-interface Gesture {
-    label: string;
-    samples: number[][];
-}
+const STEADY_TOLERANCE = 2
+const MIN_GESTURE_LEN = 20
+const MAX_GESTURE_ACC = 5
+const NUM_SAMPLES = 50;
+const NUM_DIM = 3;
+const IMAGE_CHANNELS = 1;
 
-let gestures: Gesture[]
+const BATCH_SIZE = 32;
+const BATCHES_PER_EPOCH = 10;
+const NUM_EPOCHS = 60;
 
-function drawGesture(gesture: Gesture, name: string) {
-    const series = ['X', 'Y', 'Z'];
-    const xdata = {
-        values: [0, 1, 2].map(n =>
-            gesture.samples.map((s, i) => ({ x: i, y: s[n] }))), series
-    }
-    const surface = { name: name || gesture.label, tab: 'Charts' };
-    tfvis.render.linechart(surface, xdata);
-}
+// find data -name \*.csv
+const fileNames = `
+data/michal/punch.csv
+data/michal/right.csv
+data/michal/left.csv
+data/michal/noise.csv
+data/michal/noise1.csv
+data/ira/punch2.csv
+data/ira/right1.csv
+data/ira/left0.csv
+data/ira/noise0.csv
+`
 
-async function showExamples() {
-    for (let i = 0; i < gestures.length; ++i) {
-        drawGesture(gestures[i], gestures[i].label + " " + i)
-    }
-}
+const classNames = ['noise', 'punch', 'left', 'right'];
 
 type SMap<T> = {
     [x: string]: T;
@@ -48,17 +51,43 @@ interface Range {
     postStop: number;
 }
 
-const STEADY_TOLERANCE = 2
-const MIN_GESTURE_LEN = 20
-const MAX_GESTURE_ACC = 5
-
 class DataProvider {
     private samples: number[][]
     ranges: Range[]
-    label: string
 
-    constructor(private csvurl: string, private id: number) {
-        this.label = csvurl.replace(/.*\//, "").replace(/\.csv/, "")
+    constructor(private csvurl: string, private id: number = null) {
+    }
+
+    dataset() {
+        const self = this
+        function* gen() {
+            for (let i = 0; i < BATCHES_PER_EPOCH; ++i)
+                yield self.getBatch(BATCH_SIZE)
+        }
+        return tf.data.generator(gen)
+    }
+
+    get className() {
+        if (this.id == null)
+            return "???"
+        return classNames[this.id]
+    }
+
+    private noiseRanges() {
+        const sampleLen = NUM_SAMPLES
+        const len = sampleLen + (sampleLen >> 1)
+        const midlen = sampleLen >> 1
+        this.ranges = []
+        for (let off = 0; off + len < this.samples.length; off += len) {
+            this.ranges.push({
+                id: this.id,
+                preStart: off,
+                start: off + (len - midlen >> 1),
+                stop: off + (len + midlen >> 1),
+                postStop: off + len,
+            })
+        }
+        console.log("noise", this.ranges)
     }
 
     async load() {
@@ -76,8 +105,10 @@ class DataProvider {
             allsamples.push(vals)
             this.samples.push(vals.slice(0))
         }
-        if (/noise/.test(this.csvurl))
+        if (/noise/.test(this.csvurl)) {
+            this.noiseRanges()
             return
+        }
         const bids = Object.keys(buckets)
         bids.sort((a, b) => buckets[b].length - buckets[a].length)
         const topnum = buckets[bids[0]].length
@@ -134,7 +165,7 @@ class DataProvider {
         console.log(this.ranges)
 
         for (let i = 0; i < allsamples.length; i += 400) {
-            //showDet(allsamples.slice(i, i + 400), this.label + " " + i)
+            //showDet(allsamples.slice(i, i + 400), this.className + " " + i)
         }
 
         function showDet(allsamples: number[][], name: string) {
@@ -184,109 +215,104 @@ class DataProvider {
         return [r0, r1]
     }
 
-    private noiseRanges(sampleLen: number) {
-        const len = sampleLen + (sampleLen >> 1)
-        const midlen = sampleLen >> 1
-        this.ranges = []
-        for (let off = 0; off + len < this.samples.length; off += len) {
-            this.ranges.push({
-                id: this.id,
-                preStart: off,
-                start: off + (len - midlen >> 1),
-                stop: off + (len + midlen >> 1),
-                postStop: off + len,
-            })
-        }
-        console.log("noise", this.ranges)
-    }
 
-    filterRanges(sampleLen: number) {
-        if (/noise/.test(this.csvurl))
-            this.noiseRanges(sampleLen)
-
+    filterRanges() {
         const l0 = this.ranges.length
-        this.ranges = this.ranges.filter(r => r.stop - r.start < sampleLen - 2)
+        this.ranges = this.ranges.filter(r => r.stop - r.start < NUM_SAMPLES - 2)
         const l1 = this.ranges.length
         let drop = l0 - l1
         if (drop)
-            console.log(this.label, `drop ${drop} too long`)
-        this.ranges = this.ranges.filter(r => r.postStop - r.preStart > sampleLen + 2)
+            console.log(this.csvurl, `drop ${drop} too long`)
+        this.ranges = this.ranges.filter(r => r.postStop - r.preStart > NUM_SAMPLES + 2)
         const l2 = this.ranges.length
         drop = l1 - l2
         if (drop)
-            console.log(this.label, `drop ${drop} with too little wiggle`)
+            console.log(this.csvurl, `drop ${drop} with too little wiggle`)
         permute(this.ranges)
+    }
+
+    private rangeSamples(r: Range) {
+        const len = r.start - r.preStart
+        const off = r.preStart + ((Math.random() * len) | 0)
+        return this.samples.slice(off, off + NUM_SAMPLES)
+    }
+
+    private rangeLabels(rng: Range) {
+        return classNames.map((_, i) => rng.id == i ? 1 : 0)
+    }
+
+    getBatch(batchSize: number) {
+        const ranges: Range[] = []
+        for (let i = 0; i < batchSize; ++i)
+            ranges.push(pickRandom(this.ranges))
+        return tf.tidy(() => ({
+            xs: tf.tensor(ranges.map(r => this.rangeSamples(r)))
+                .reshape([batchSize, NUM_SAMPLES, NUM_DIM, IMAGE_CHANNELS]),
+            ys: tf.tensor(ranges.map(r => this.rangeLabels(r)))
+        }))
     }
 }
 
 async function run() {
-    const datasets = classNames.map((id, idx) => new DataProvider("data/" + id + ".csv", idx))
+    const datasets: DataProvider[] = []
+    for (const fn of fileNames.split(/\n/).map(s => s.trim())) {
+        if (!fn) continue
+        const idx = classNames.findIndex(cl => fn.indexOf(cl) >= 0)
+        const d = new DataProvider(fn, idx)
+        datasets.push(d)
+    }
 
     let lens: number[] = []
     for (const d of datasets) {
         await d.load()
-        for (const r of d.ranges || []) {
+        for (const r of d.ranges) {
             lens.push(r.stop - r.start)
         }
     }
     console.log(lens)
     console.log("median len: " + median(lens))
-    console.log("len 50+: " + lens.filter(l => l > 50).length)
+    console.log("len 50+: " + lens.filter(l => l > NUM_SAMPLES).length)
     for (const d of datasets) {
-        await d.filterRanges(50)
+        await d.filterRanges()
     }
 
-    const trainData = new DataProvider("train", 0)
-    const testData = new DataProvider("test", 0)
+    const trainData = new DataProvider("train")
+    const testData = new DataProvider("test")
 
     for (const d of datasets) {
         const [test, train] = d.split(0.2)
         trainData.append(train)
         testData.append(test)
+        console.log(d.className, test.ranges.length, train.ranges.length)
     }
+    trainData.filterRanges()
+    testData.filterRanges()
 
-
-    /*
-    for (const bid of bids.slice(0, 10)) {
-        console.log(bid, buckets[bid])
-    }
-    */
-
-    /*
-    const resp = await fetch(new Request("data.json"))
-    gestures = await resp.json()
-    // await showExamples();
 
     const model = getModel();
     tfvis.show.modelSummary({ name: 'Model Architecture' }, model);
 
-    await train(model);
-    */
+    await train(model, trainData, testData);
+
+    await showAccuracy(model, trainData)
+    await showConfusion(model, trainData)
 }
 
 document.addEventListener('DOMContentLoaded', run);
 
-const NUM_SAMPLES = 50;
-const NUM_DIM = 3;
-const IMAGE_CHANNELS = 1;
-
-const classNames = ['noise', 'punch', 'left', 'right'];
-
-/*
-function doPrediction(model, data, testDataSize = 500) {
+function doPrediction(model: tf.LayersModel, data: DataProvider, testDataSize = 500) {
     const IMAGE_WIDTH = 28;
     const IMAGE_HEIGHT = 28;
-    const testData = data.nextTestBatch(testDataSize);
-    const testxs = testData.xs.reshape([testDataSize, IMAGE_WIDTH, IMAGE_HEIGHT, 1]);
-    const labels = testData.labels.argMax(-1);
-    const preds = model.predict(testxs).argMax(-1);
-
+    const testData = data.getBatch(testDataSize);
+    const testxs = testData.xs // .reshape([testDataSize, IMAGE_WIDTH, IMAGE_HEIGHT, 1]);
+    const labels = testData.ys.argMax(-1) as tf.Tensor1D;
+    const preds = (model.predict(testxs) as tf.Tensor1D).argMax(-1) as tf.Tensor1D;
     testxs.dispose();
     return [preds, labels];
 }
 
 
-async function showAccuracy(model, data) {
+async function showAccuracy(model: tf.LayersModel, data: DataProvider) {
     const [preds, labels] = doPrediction(model, data);
     const classAccuracy = await tfvis.metrics.perClassAccuracy(labels, preds);
     const container = { name: 'Accuracy', tab: 'Evaluation' };
@@ -295,16 +321,16 @@ async function showAccuracy(model, data) {
     labels.dispose();
 }
 
-async function showConfusion(model, data) {
+async function showConfusion(model: tf.LayersModel, data: DataProvider) {
     const [preds, labels] = doPrediction(model, data);
     const confusionMatrix = await tfvis.metrics.confusionMatrix(labels, preds);
     const container = { name: 'Confusion Matrix', tab: 'Evaluation' };
     tfvis.render.confusionMatrix(
-        container, { values: confusionMatrix }, classNames);
+        container, { values: confusionMatrix, tickLabels: classNames });
 
     labels.dispose();
 }
-*/
+
 
 function getModel() {
     const model = tf.sequential();
@@ -360,55 +386,20 @@ function permute<T>(arr: T[]) {
     }
 }
 
-async function train(model: tf.LayersModel) {
+function pickRandom<T>(arr: T[]) {
+    return arr[Math.random() * arr.length | 0]
+}
+
+async function train(model: tf.LayersModel, train: DataProvider, test: DataProvider) {
     const metrics = ['loss', 'val_loss', 'acc', 'val_acc'];
     const container = {
         name: 'Model Training', styles: { height: '1000px' }
     };
     const fitCallbacks = tfvis.show.fitCallbacks(container, metrics);
 
-    const BATCH_SIZE = 8;
-
-    const trainData: Gesture[] = []
-    const testData: Gesture[] = []
-    for (const lbl of classNames) {
-        const gg = gestures.filter(g => g.label == lbl)
-        permute(gg)
-        const idx = (gg.length / 4) | 0
-        for (let i = 0; i < gg.length; ++i) {
-            const s = gg[i].samples
-            if (s.length < 0.95 * NUM_SAMPLES || s.length > 1.05 * NUM_SAMPLES)
-                throw new Error("Bad length: " + s.length)
-            while (s.length < NUM_SAMPLES)
-                s.push(s[s.length - 1])
-            gg[i].samples = s.slice(0, NUM_SAMPLES)
-            if (i < idx) testData.push(gg[i])
-            else trainData.push(gg[i])
-        }
-    }
-    permute(trainData)
-    permute(testData)
-
-    function toTensors(gg: Gesture[]) {
-        return [
-            tf.tensor(gg.map(g => g.samples)).reshape([gg.length, NUM_SAMPLES, NUM_DIM, IMAGE_CHANNELS]),
-            tf.tensor(gg.map(g => {
-                const r = []
-                for (const lbl of classNames)
-                    r.push(lbl == g.label ? 1 : 0)
-                return r
-            }))
-        ]
-    }
-
-    const [trainXs, trainYs] = tf.tidy(() => toTensors(trainData))
-    const [testXs, testYs] = tf.tidy(() => toTensors(testData))
-
-    return model.fit(trainXs, trainYs, {
-        batchSize: BATCH_SIZE,
-        validationData: [testXs, testYs],
-        epochs: 50,
-        shuffle: true,
+    return model.fitDataset(train.dataset(), {
+        validationData: test.dataset(),
+        epochs: NUM_EPOCHS,
         callbacks: fitCallbacks
     });
 }
