@@ -1,16 +1,22 @@
 import * as tf from '@tensorflow/tfjs'
 import * as tfvis from '@tensorflow/tfjs-vis'
 
+// segmentation
 const STEADY_TOLERANCE = 2
 const MIN_GESTURE_LEN = 20
 const MAX_GESTURE_ACC = 5
+
+// data format
 const NUM_SAMPLES = 50;
 const NUM_DIM = 3;
 const IMAGE_CHANNELS = 1;
 
-const BATCH_SIZE = 32;
+// learning
+const BATCH_SIZE = 64;
 const BATCHES_PER_EPOCH = 10;
-const NUM_EPOCHS = 60;
+//const NUM_EPOCHS = 35;
+const NUM_EPOCHS = 50;
+const RAND_ROT = 0.2;
 
 // find data -name \*.csv
 const fileNames = `
@@ -49,6 +55,76 @@ interface Range {
     start: number;
     stop: number;
     postStop: number;
+}
+
+function multiply(mat: number[][], vect: number[]) {
+    const res: number[] = new Array(vect.length)
+    for (let i = 0; i < vect.length; ++i) {
+        res[i] = 0
+        for (let j = 0; j < vect.length; ++j) {
+            res[i] += mat[i][j] * vect[j]
+        }
+    }
+    return res
+}
+
+function rotate(a: number, b: number, c: number, samples: number[][]) {
+    const sa = Math.sin(a)
+    const ca = Math.cos(a)
+    const sb = Math.sin(b)
+    const cb = Math.cos(b)
+    const sg = Math.sin(c)
+    const cg = Math.cos(c)
+    const rotmat = [
+        [ca * cb, ca * sb * sg - sa * cg, ca * sb * cg + sa * sg],
+        [sa * cb, sa * sb * sg + ca * cg, sa * sb * cg - ca * sg],
+        [-sb, cb * sg, cb * cg]
+    ]
+    return samples.map(s => multiply(rotmat, s))
+}
+
+function rand(max: number) {
+    // TODO use something else?
+    return Math.random() * max
+}
+
+function randSymmetric(max: number) {
+    return rand(max * 2) - max
+}
+
+function randint(max: number) {
+    return rand(max) | 0
+}
+
+function vectlen(s: number[]) {
+    return Math.sqrt(s[0] * s[0] + s[1] * s[1] + s[2] * s[2])
+}
+
+function vectmul(s: number[], m: number) {
+    return s.map(v => v * m)
+}
+
+function testRot() {
+    const samples: number[][] = []
+    for (let i = 0; i < 100; ++i)
+        samples.push([
+            randSymmetric(1),
+            randSymmetric(1),
+            randSymmetric(1),
+        ])
+    for (let k = 0; k < 100; ++k) {
+        const ss = rotate(
+            randSymmetric(1),
+            randSymmetric(1),
+            randSymmetric(1),
+            samples)
+        for (let i = 0; i < samples.length; ++i) {
+            const l0 = vectlen(samples[i])
+            const l1 = vectlen(ss[i])
+            if (Math.abs(l0 - l1) / (l0 + l1) > 0.00001)
+                throw new Error()
+        }
+    }
 }
 
 class DataProvider {
@@ -231,20 +307,40 @@ class DataProvider {
         permute(this.ranges)
     }
 
+    private flatRandom() {
+        let vect = [randSymmetric(1), randSymmetric(1), randSymmetric(1)]
+        const len = vectlen(vect)
+        vect = vectmul(vect, 1 / len)
+        const res: number[][] = []
+        for (let i = 0; i < NUM_SAMPLES; ++i) {
+            res.push(vect.map(v => v + randSymmetric(0.01)))
+        }
+        return res
+    }
+
     private rangeSamples(r: Range) {
+        if (r === null) return this.flatRandom()
         const len = r.start - r.preStart
-        const off = r.preStart + ((Math.random() * len) | 0)
-        return this.samples.slice(off, off + NUM_SAMPLES)
+        const off = r.preStart + randint(len)
+        const res = this.samples.slice(off, off + NUM_SAMPLES)
+        const rot = rotate(
+            randSymmetric(RAND_ROT),
+            randSymmetric(RAND_ROT),
+            randSymmetric(RAND_ROT),
+            res
+        )
+        return rot
     }
 
     private rangeLabels(rng: Range) {
+        if (rng === null) rng = { id: 0 } as any
         return classNames.map((_, i) => rng.id == i ? 1 : 0)
     }
 
     getBatch(batchSize: number) {
         const ranges: Range[] = []
         for (let i = 0; i < batchSize; ++i)
-            ranges.push(pickRandom(this.ranges))
+            ranges.push(rand(1) < 0.8 ? pickRandom(this.ranges) : null)
         return tf.tidy(() => ({
             xs: tf.tensor(ranges.map(r => this.rangeSamples(r)))
                 .reshape([batchSize, NUM_SAMPLES, NUM_DIM, IMAGE_CHANNELS]),
@@ -292,19 +388,34 @@ async function run() {
     const model = getModel();
     tfvis.show.modelSummary({ name: 'Model Architecture' }, model);
 
+    const t0 = Date.now()
     await train(model, trainData, testData);
+    const time = Date.now() - t0
+    console.log("train: " + time + "ms")
 
-    await showAccuracy(model, trainData)
+    await showAccuracy(model, trainData, time)
     await showConfusion(model, trainData)
+
+    await model.save({
+        save: (data) => {
+            console.log(data)
+            return Promise.resolve({
+                modelArtifactsInfo: {
+                    dateSaved: new Date(),
+                    modelTopologyType: "JSON"
+                }
+            })
+        }
+    })
+
+    await model.save("downloads://gestures.tfjsmodel")
 }
 
 document.addEventListener('DOMContentLoaded', run);
 
-function doPrediction(model: tf.LayersModel, data: DataProvider, testDataSize = 500) {
-    const IMAGE_WIDTH = 28;
-    const IMAGE_HEIGHT = 28;
+function doPrediction(model: tf.LayersModel, data: DataProvider, testDataSize = 2000) {
     const testData = data.getBatch(testDataSize);
-    const testxs = testData.xs // .reshape([testDataSize, IMAGE_WIDTH, IMAGE_HEIGHT, 1]);
+    const testxs = testData.xs
     const labels = testData.ys.argMax(-1) as tf.Tensor1D;
     const preds = (model.predict(testxs) as tf.Tensor1D).argMax(-1) as tf.Tensor1D;
     testxs.dispose();
@@ -312,11 +423,20 @@ function doPrediction(model: tf.LayersModel, data: DataProvider, testDataSize = 
 }
 
 
-async function showAccuracy(model: tf.LayersModel, data: DataProvider) {
+async function showAccuracy(model: tf.LayersModel, data: DataProvider, ms: number) {
     const [preds, labels] = doPrediction(model, data);
     const classAccuracy = await tfvis.metrics.perClassAccuracy(labels, preds);
     const container = { name: 'Accuracy', tab: 'Evaluation' };
-    tfvis.show.perClassAccuracy(container, classAccuracy, classNames);
+
+    let sum = 0
+    let cnt = 0
+    for (const acc of classAccuracy) {
+        sum += acc.accuracy
+        cnt += acc.count
+    }
+    sum /= classAccuracy.length
+
+    tfvis.show.perClassAccuracy(container, classAccuracy.concat({ accuracy: sum, count: ms }), classNames.concat("AVG"));
 
     labels.dispose();
 }
@@ -338,19 +458,19 @@ function getModel() {
     model.add(tf.layers.conv2d({
         inputShape: [NUM_SAMPLES, NUM_DIM, IMAGE_CHANNELS],
         kernelSize: [4, 3],
-        filters: 8,
+        filters: 16,
         strides: 1,
         padding: 'same',
         activation: 'relu',
         kernelInitializer: 'varianceScaling'
     }));
 
-    model.add(tf.layers.maxPooling2d({ poolSize: [3, 3], strides: [3, 3] }));
+    model.add(tf.layers.maxPooling2d({ poolSize: [2, 3], strides: [2, 3] }));
     model.add(tf.layers.dropout({ rate: 0.1 }));
 
     model.add(tf.layers.conv2d({
         kernelSize: [4, 1],
-        filters: 16,
+        filters: 32,
         strides: 1,
         activation: 'relu',
         kernelInitializer: 'varianceScaling'
@@ -378,8 +498,8 @@ function getModel() {
 
 function permute<T>(arr: T[]) {
     for (let i = 0; i < arr.length; ++i) {
-        const a = (Math.random() * arr.length) | 0
-        const b = (Math.random() * arr.length) | 0
+        const a = randint(arr.length)
+        const b = randint(arr.length)
         const tmp = arr[a]
         arr[a] = arr[b]
         arr[b] = tmp
@@ -387,7 +507,7 @@ function permute<T>(arr: T[]) {
 }
 
 function pickRandom<T>(arr: T[]) {
-    return arr[Math.random() * arr.length | 0]
+    return arr[randint(arr.length)]
 }
 
 async function train(model: tf.LayersModel, train: DataProvider, test: DataProvider) {
