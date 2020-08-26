@@ -15,7 +15,7 @@ const IMAGE_CHANNELS = 1;
 const BATCH_SIZE = 64;
 const BATCHES_PER_EPOCH = 10;
 //const NUM_EPOCHS = 35;
-const NUM_EPOCHS = 50;
+const NUM_EPOCHS = 30;
 const RAND_ROT = 0.2;
 
 // find data -name \*.csv
@@ -460,23 +460,33 @@ function getModel() {
         kernelSize: [4, 3],
         filters: 16,
         strides: 1,
-        padding: 'same',
+        padding: 'valid',
         activation: 'relu',
         kernelInitializer: 'varianceScaling'
     }));
 
-    model.add(tf.layers.maxPooling2d({ poolSize: [2, 3], strides: [2, 3] }));
+    model.add(tf.layers.maxPooling2d({ poolSize: [2, 1], strides: [2, 1] }));
     model.add(tf.layers.dropout({ rate: 0.1 }));
 
     model.add(tf.layers.conv2d({
-        kernelSize: [4, 1],
-        filters: 32,
+        kernelSize: [2, 1],
+        filters: 16,
         strides: 1,
         activation: 'relu',
         kernelInitializer: 'varianceScaling'
     }));
-    model.add(tf.layers.maxPooling2d({ poolSize: [2, 1], strides: [2, 1] }));
+    //model.add(tf.layers.maxPooling2d({ poolSize: [2, 1], strides: [2, 1] }));
     model.add(tf.layers.dropout({ rate: 0.1 }));
+
+    model.add(tf.layers.conv2d({
+        kernelSize: [2, 1],
+        filters: 16,
+        strides: 1,
+        activation: 'relu',
+        kernelInitializer: 'varianceScaling'
+    }));
+    model.add(tf.layers.dropout({ rate: 0.1 }));
+
     model.add(tf.layers.flatten());
 
     model.add(tf.layers.dense({
