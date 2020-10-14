@@ -153,7 +153,7 @@ class DataProvider {
                 postStop: off + len,
             })
         }
-        console.log("noise", this.ranges)
+        //console.log("noise", this.ranges)
     }
 
     async load() {
@@ -231,7 +231,7 @@ class DataProvider {
             this.ranges[i - 1].postStop = this.ranges[i].start - 1
         }
         this.ranges[this.ranges.length - 1].postStop = allsamples.length - 1
-        console.log(this.ranges)
+        // console.log(this.ranges)
     }
 
     append(other: DataProvider) {
@@ -284,6 +284,21 @@ class DataProvider {
         if (drop)
             console.log(this.csvurl, `drop ${drop} with too little wiggle`)
         permute(this.ranges)
+    }
+
+    annotatedData() {
+        const res: number[][] = []
+        for (let i = 0; i < this.samples.length; ++i) {
+            let best = 0
+            for (const rng of this.ranges) {
+                if (rng.start <= i && i <= rng.stop)
+                    best = Math.max(best, 3)
+                else if (rng.preStart <= i && i <= rng.postStop)
+                    best = Math.max(best, 0.5)
+            }
+            res.push(this.samples[i].concat([best]))
+        }
+        return res
     }
 
     private flatRandom() {
@@ -366,11 +381,18 @@ async function run() {
             lens.push(r.stop - r.start)
         }
     }
-    console.log(lens)
+    //console.log(lens)
     console.log("median len: " + median(lens))
     console.log("len 50+: " + lens.filter(l => l > NUM_SAMPLES).length)
+
+    mkdirP("built/seg")
     for (const d of datasets) {
-        await d.filterRanges()
+        d.filterRanges()
+        if (d.className != "noise") {
+            const pp = "built/seg/" + d.csvurl.replace(/\//g, "-")
+            const csv = "x,y,z,rng\n" + toCSV(d.annotatedData())
+            fs.writeFileSync(pp, csv)
+        }
     }
 
     const trainData = new DataProvider("train")
