@@ -397,16 +397,20 @@ async function run() {
 
     const trainData = new DataProvider("train")
     const testData = new DataProvider("test")
+    const validateData = new DataProvider("validate")
 
     for (const d of datasets) {
-        const [test, train] = d.split(0.2)
+        const [test0, train] = d.split(0.4)
+        const [test, validate] = d.split(0.5)
         trainData.append(train)
         testData.append(test)
-        console.log(d.className, test.ranges.length, train.ranges.length)
+        validateData.append(validate)
+        console.log(d.className, test.ranges.length, train.ranges.length, validate.ranges.length)
     }
 
-    writeSet(trainData, 500)
-    writeSet(testData, 100)
+    writeSet(trainData, 1000)
+    writeSet(testData, 500)
+    writeSet(validateData, 500)
 
     function writeSet(ds: DataProvider, num: number) {
         ds.filterRanges()
@@ -418,6 +422,7 @@ async function run() {
             const csv = "x,y,z\n" + toCSV(s.data)
             fs.writeFileSync(fn, csv)
         }
+        console.log("written to " + pp)
     }
 }
 
